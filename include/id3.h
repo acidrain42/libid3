@@ -113,8 +113,7 @@ void set_memory_ID3(ID3 *info, unsigned char *ptr, size_t size) ;
 void set_flags_ID3(ID3 *info, id3flags mask);
 int ID3_to_file(char *filename, char *newfile);
 
-
-// Error Codes
+/* Error Codes */
 typedef enum {
   ID3_OK= 0,
   ID3_ERR_EMPTY_FILE= 1,
@@ -142,8 +141,7 @@ typedef enum {
 #define VERSION1_TAG        (TITLE_TAG|ARTIST_TAG|ALBUM_TAG|YEAR_TAG|COMMENT_TAG|TRACK_TAG|GENRE_TAG)        /* Encoder for the track */
 #define ALL_TAG        (TITLE_TAG|ARTIST_TAG|ALBUM_TAG|YEAR_TAG|COMMENT_TAG|TRACK_TAG|GENRE_TAG|ENCODER_TAG|VERSION_TAG|SIGNATURE_TAG)        /* Encoder for the track */
 
-#define DEBUG 1
-#ifdef DEBUG
+#ifdef ID3_DEBUG
 #define DEBUG_ENTER(A) const char *DEBUG_FUNCTION=A;printf("Entering %s\n", DEBUG_FUNCTION);fflush(stdout);
 #define DEBUG_RETURN_MESSAGE(A,B) {printf("Leaving %s: ", DEBUG_FUNCTION);printf(A);printf("\n");fflush(stdout);return B;}
 #define DEBUG_RETURN_VOID printf("Leaving %s\n", DEBUG_FUNCTION);fflush(stdout);
@@ -152,13 +150,17 @@ typedef enum {
 #define DEBUG_ASSERT(A) assert(A);
 #define WATCHPOINT printf("WATCHPOINT %s %d\n", __FILE__, __LINE__);fflush(stdout);
 #else
-#define DEBUG_ENTER(a);
-#define DEBUG_RETURN(a); 
-#define DEBUG_RETURN_MESSAGE(A,B);
-#define DEBUG_RETURN_VOID;
-#define DEBUG_PRINT(A);
-#define DEBUG_ASSERT(A);
-#define WATCHPOINT;
+#define DEBUG_ENTER(a)
+#define DEBUG_RETURN(a) return a;
+#define DEBUG_RETURN_MESSAGE(A,B) return B;
+#define DEBUG_RETURN_VOID
+#define DEBUG_PRINT(A)
+#define DEBUG_ASSERT(A)
+#define WATCHPOINT
 #endif
 
+#ifdef __cplusplus
+}
 #endif
+
+#endif /*__ID3_H__*/

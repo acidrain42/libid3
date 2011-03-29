@@ -78,15 +78,6 @@ const char *id3_genres[GENRE_MAX] =
   "Anime", "JPop", "Synthpop"
 };
 
-static void print_char (unsigned char *foo, int length) 
-{
-  int x=0;
-  printf("String %d\n", length);
-  for (; x < length; x++ )
-    printf("%d: %c:%d\n", x, foo[x], foo[x]);
-  putchar('\n');
-}
-
 static const char * genre_string(int genre) 
 {
   if (genre < GENRE_MAX && genre > -1)
