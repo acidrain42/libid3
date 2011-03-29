@@ -1,8 +1,8 @@
 dnl For libID3
-AC_INIT(include/id3.h)
+AC_INIT("libid3", 1.3)
 AC_CONFIG_AUX_DIR(config)
 AM_CONFIG_HEADER(config.h)
-AM_INIT_AUTOMAKE("libid3", 1.3 )
+AM_INIT_AUTOMAKE("libid3", 1.3)
 
 SHARED_LIB_MAJOR_VERSION=1
 SHARED_LIB_MINOR_VERSION=0
