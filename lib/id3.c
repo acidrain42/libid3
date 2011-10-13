@@ -6,7 +6,7 @@
  **  It was pretty annoying that I had to write this
  **  but I could not find one single ID3 library
  **  that had a BSD license and was written in C.
- */ 
+ */
 
 /* ====================================================================
 Copyright (c) 2006, Tangent Org
@@ -44,6 +44,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <id3.h>
 #include <config.h>
+#include <iconv.h>
 #include "md5.h"
 
 void md5_signature(const unsigned char *buf, int length, char *result);
@@ -78,7 +79,7 @@ const char *id3_genres[GENRE_MAX] =
   "Anime", "JPop", "Synthpop"
 };
 
-static const char * genre_string(int genre) 
+static const char * genre_string(int genre)
 {
   if (genre < GENRE_MAX && genre > -1)
     return id3_genres[genre];
@@ -86,35 +87,127 @@ static const char * genre_string(int genre)
   return NULL;
 }
 
-static void clean_string(unsigned char *string, int length) 
-{
-  unsigned char *ptr= string;
+void encode_conv(char *str_input, unsigned int len, const char *fromcode, const char *tocode) {
+    size_t iconv_value;
+    char *str_output;
+    size_t str_input_len, str_output_len, new_len;
+    iconv_t conv_desc;
 
-  for(; (ptr - string) < length; ptr++) 
-    if (!isprint(*ptr)) 
-      *ptr= ' ';
+    /* The variables with "start" in their name are solely for display
+     of what the function is doing. As iconv runs, it alters the
+     values of the variables, so these are for keeping track of the
+     start points and start lengths. */
+    char *_str_output;
+    const char *_str_input;
+    size_t _str_output_len, _str_input_len;
 
+    conv_desc = iconv_open(tocode, fromcode);
+    if (conv_desc == -1) {
+        /* Initialization failure. */
+        if (errno == EINVAL) {
+            fprintf(stderr, "Conversion from '%s' to '%s' is not supported.\n",
+                    fromcode, tocode);
+        } else {
+            fprintf(stderr, "Initialization failure: %s\n", strerror(errno));
+        }
+        exit(1);
+    }
+
+    // len - 1 because or first byte indicating encoding
+    if (!(len-1)) {
+        fprintf(stderr, "Input string is empty.\n");
+        return (0);
+    }
+    str_input_len = len - 1;
+
+    /* Assign enough space to put the UTF-8. */
+    str_output_len = str_input_len * 2;
+    str_output = calloc(str_output_len, 1);
+
+    /* Keep track of the variables. */
+    _str_output = str_output;
+    _str_output_len = str_output_len;
+    _str_input = str_input++;
+    _str_input_len = str_input_len;
+
+    iconv_value = iconv(conv_desc, &str_input, &str_input_len, &str_output, &str_output_len);
+
+    /* Handle failures. */
+    if (iconv_value == (size_t) -1) {
+        fprintf(stderr, "iconv failed: in string '%s', length %d, "
+            "out string '%s', length %d\n", str_input, str_input_len, _str_output, _str_output_len);
+        switch (errno) {
+        case EILSEQ:
+            fprintf(stderr, "Invalid multibyte sequence.\n");
+            break;
+        case EINVAL:
+            fprintf(stderr, "Incomplete multibyte sequence.\n");
+            break;
+        case E2BIG:
+            fprintf(stderr, "No more room.\n");
+            break;
+        default:
+            fprintf(stderr, "Error: %s.\n", strerror(errno));
+        }
+        exit(1);
+    }
+
+    if (iconv_close(conv_desc) != 0) {
+        fprintf(stderr, "iconv_close failed: %s\n", strerror(errno));
+        exit(1);
+    }
+
+    memset(_str_input, 0, len);
+    
+    new_len = _str_output_len - str_output_len;
+    memcpy(_str_input, _str_output, new_len);
+
+    free(_str_output);
 }
 
-static char * add_tag(ID3 *info, const char *tag, size_t length) 
+static void convert_string(unsigned char *str, int length)
+{
+    char *utf8;
+    int i, new_length;
+
+    /**
+     * 0: ISO-8859-1
+     * 1: UTF-16 w/ BOM
+     * 2: UTF-16 w/o BOM
+     * 3: UTF-8
+     */
+    if (*str == 0) {
+        encode_conv(str, length, "ISO-8859-1", "UTF-8");
+    } else if (*str == 1 || *str == 2) {
+        encode_conv(str, length, "UTF-16", "UTF-8");
+    } else if (*str == 3) {
+        // Keep as is, remove encoding byte
+        for (i = 0; i < length - 1; i++) {
+            str[i] = str[i + 1];
+        }
+        str[length - 1] = '\0';
+    }
+}
+
+static char * add_tag(ID3 *info, const char *tag, size_t length)
 {
   unsigned char *begin;
 
   // If the current tag is too big for our block of memory
-  if ((length + info->length) > info->size) 
+  if ((length + info->length) > info->size)
   {
-    if ( info->user_memory) 
+    if ( info->user_memory)
     {
       // This because we didn't allocate the memory in the first place, and this should be an error
       return NULL;
     }
-    else if ( info->size == 0 ) 
+    else if ( info->size == 0 )
     {
       info->buffer= (unsigned char *)malloc(ID3_INIT_SIZE);
       info->size= ID3_INIT_SIZE;
       info->ptr= info->buffer;
     }
-    else if ( length > info->tag_length  ) 
+    else if ( length > info->tag_length  )
     {
       info->buffer= realloc(info->buffer, info->tag_length);
       info->ptr= info->buffer + info->length;
@@ -131,7 +224,7 @@ static char * add_tag(ID3 *info, const char *tag, size_t length)
   }
   begin= info->ptr;
   memcpy(info->ptr, tag, length);	
-  clean_string(info->ptr, length);
+  convert_string(info->ptr, length);
   info->length += length + 1;
   info->ptr += length;
   *info->ptr++= '\0';
@@ -140,7 +233,7 @@ static char * add_tag(ID3 *info, const char *tag, size_t length)
   return (char *)begin;
 }
 
-static void select_tag(ID3 *info, const char *name, const char *ptr, size_t length) 
+static void select_tag(ID3 *info, const char *name, const char *ptr, size_t length)
 {
   if (!strcmp(name, "title"))
   {
@@ -185,10 +278,10 @@ static void select_tag(ID3 *info, const char *name, const char *ptr, size_t leng
 }
 
 
-static size_t id3_size(const unsigned char* buffer) 
+static size_t id3_size(const unsigned char* buffer)
 {
   size_t size = 0;
-  size=  (buffer[3] & 0x7f) + 
+  size=  (buffer[3] & 0x7f) +
     ((buffer[2] & 0x7f) << 7) +
     ((buffer[1] & 0x7f) << 14) +
     ((buffer[0] & 0x7f) << 21);
@@ -196,29 +289,29 @@ static size_t id3_size(const unsigned char* buffer)
   return size;
 }
 
-static size_t id3_size2(const unsigned char * buffer) 
+static size_t id3_size2(const unsigned char * buffer)
 {
   size_t size = 0;
-  size=  (buffer[2] & 0x7f) + 
+  size=  (buffer[2] & 0x7f) +
     ((buffer[1] & 0x7f) << 7) +
     ((buffer[0] & 0x7f) << 14);
 
   return size;
 }
 
-static size_t get_framesize(const unsigned char *buffer) 
+static size_t get_framesize(const unsigned char *buffer)
 {
   return ((buffer[6] << 8) + (buffer[7]));
 }
 
-static int get_id3v1_tag (ID3 *info, unsigned char *blob, size_t blob_length) 
+static int get_id3v1_tag (ID3 *info, unsigned char *blob, size_t blob_length)
 {
   unsigned char *ptr= (unsigned char *)blob;
   const char *genre= NULL;
 
   ptr += (blob_length - 128);
 
-  if (!memcmp(ptr, "TAG", 3)) 
+  if (!memcmp(ptr, "TAG", 3))
   {
     /* Paranoid, not all systems are made equally */
     ptr +=3;
@@ -257,11 +350,11 @@ static int get_id3v1_tag (ID3 *info, unsigned char *blob, size_t blob_length)
   return ID3_ERR_NO_TAG;
 }
 
-static int id_2_2(ID3 *info, unsigned char *blob) 
+static int id_2_2(ID3 *info, unsigned char *blob)
 {
   unsigned char *ptr= blob;
 
-  while (info->tag_length > (ptr - blob)) 
+  while (info->tag_length > (ptr - blob))
   {
     size_t size= id3_size2(ptr+3);
     char *compare_ptr= (char *)ptr;
@@ -271,7 +364,7 @@ static int id_2_2(ID3 *info, unsigned char *blob)
       return 0;
     }
 
-    if (size + (ptr - blob) > info->tag_length) 
+    if (size + (ptr - blob) > info->tag_length)
       break;
 
     if (!strncmp("TP1", compare_ptr, 3) && (info->mask & ARTIST_TAG))
@@ -279,41 +372,41 @@ static int id_2_2(ID3 *info, unsigned char *blob)
       info->processor(info, "artist", compare_ptr + 6, size);
       info->mask_found |= ARTIST_TAG;
     }
-    else if (!strncmp("TT2", compare_ptr, 3) && (info->mask & TITLE_TAG)) 
+    else if (!strncmp("TT2", compare_ptr, 3) && (info->mask & TITLE_TAG))
     {
       info->processor(info, "title", compare_ptr + 6, size);
       info->mask_found |= TITLE_TAG;
     }
-    else if (!strncmp("TAL", compare_ptr, 3) && (info->mask & ALBUM_TAG)) 
+    else if (!strncmp("TAL", compare_ptr, 3) && (info->mask & ALBUM_TAG))
     {
       info->processor(info, "album", compare_ptr + 6, size);
       info->mask_found |= ALBUM_TAG;
     }
-    else if (!strncmp("TRK", compare_ptr, 3) && (info->mask & TRACK_TAG)) 
+    else if (!strncmp("TRK", compare_ptr, 3) && (info->mask & TRACK_TAG))
     {
       info->processor(info, "track", compare_ptr + 6, size);
       info->mask_found |= TRACK_TAG;
     }
-    else if (!strncmp("TEN", compare_ptr, 3) && (info->mask & ENCODER_TAG)) 
+    else if (!strncmp("TEN", compare_ptr, 3) && (info->mask & ENCODER_TAG))
     {
       info->processor(info, "encoder", compare_ptr + 6, size);
       info->mask_found |= ENCODER_TAG;
     }
-    else if (!strncmp("TYE", compare_ptr, 3) && (info->mask & YEAR_TAG)) 
+    else if (!strncmp("TYE", compare_ptr, 3) && (info->mask & YEAR_TAG))
     {
       info->processor(info, "year", compare_ptr + 6, size);
       info->mask_found |= YEAR_TAG;
     }
-    else if (!strncmp("COM", compare_ptr, 3) && (info->mask & COMMENT_TAG)) 
+    else if (!strncmp("COM", compare_ptr, 3) && (info->mask & COMMENT_TAG))
     {
       info->processor(info, "comment", compare_ptr + 6, size);
       info->mask_found |= COMMENT_TAG;
     }
-    else if (!strncmp("TCO", compare_ptr, 3) && (info->mask & GENRE_TAG)) 
+    else if (!strncmp("TCO", compare_ptr, 3) && (info->mask & GENRE_TAG))
     {
       info->processor(info, "genre", compare_ptr + 6, size);
       info->mask_found |= GENRE_TAG;
-    } 
+    }
     else
     {
       char temp[4];
@@ -331,52 +424,52 @@ static int id_2_2(ID3 *info, unsigned char *blob)
   return 0;
 }
 
-static int id_2_3(ID3 *info, unsigned char *blob) 
+static int id_2_3(ID3 *info, unsigned char *blob)
 {
   unsigned char *ptr= blob;
 
-  while (info->tag_length > (ptr - blob)) 
+  while (info->tag_length > (ptr - blob))
   {
     size_t size= get_framesize(ptr);
     char *compare_ptr= (char *)ptr;
 
-    if (size + (ptr - blob) > info->tag_length) 
+    if (size + (ptr - blob) > info->tag_length)
       break;
 
     if (size <= 0)
       return 0;
 
-    if (!strncmp("TPE1", compare_ptr, 4) && (info->mask & ARTIST_TAG)) 
+    if (!strncmp("TPE1", compare_ptr, 4) && (info->mask & ARTIST_TAG))
     {
       info->processor(info, "artist", compare_ptr +10, size);
       info->mask_found |= ARTIST_TAG;
     }
-    else if (!strncmp("TIT2", compare_ptr, 4) && (info->mask & TITLE_TAG)) 
+    else if (!strncmp("TIT2", compare_ptr, 4) && (info->mask & TITLE_TAG))
     {
       info->processor(info, "title", compare_ptr +10, size);
       info->mask_found |= TITLE_TAG;
     }
-    else if (!strncmp("TALB", compare_ptr, 4) && (info->mask & ALBUM_TAG)) 
+    else if (!strncmp("TALB", compare_ptr, 4) && (info->mask & ALBUM_TAG))
     {
       info->processor(info, "album", compare_ptr +10, size);
       info->mask_found |= ARTIST_TAG;
     }
-    else if (!strncmp("TRCK",compare_ptr,4) && (info->mask & TRACK_TAG)) 
+    else if (!strncmp("TRCK",compare_ptr,4) && (info->mask & TRACK_TAG))
     {
       info->processor(info, "track", compare_ptr +10, size);
       info->mask_found |= TRACK_TAG;
     }
-    else if (!strncmp("TYER",compare_ptr,4) && (info->mask & YEAR_TAG)) 
+    else if (!strncmp("TYER",compare_ptr,4) && (info->mask & YEAR_TAG))
     {
       info->processor(info, "year", compare_ptr +10, size);
       info->mask_found |= YEAR_TAG;
     }
-    else if (!strncmp("TENC",compare_ptr,4) && (info->mask & ENCODER_TAG)) 
+    else if (!strncmp("TENC",compare_ptr,4) && (info->mask & ENCODER_TAG))
     {
       info->processor(info, "encoder", compare_ptr +10, size);
       info->mask_found |= ENCODER_TAG;
     }
-    else if (!strncmp("COMM",compare_ptr,4) && (info->mask & COMMENT_TAG)) 
+    else if (!strncmp("COMM",compare_ptr,4) && (info->mask & COMMENT_TAG))
     {
       info->processor(info, "commment", compare_ptr +10, size);
       info->mask_found |= COMMENT_TAG;
@@ -397,18 +490,18 @@ static int id_2_3(ID3 *info, unsigned char *blob)
   return 0;
 }
 
-static int process_extended_header(ID3 *info, unsigned char *blob) 
+static int process_extended_header(ID3 *info, unsigned char *blob)
 {
   unsigned long CRC= 0;
   unsigned long paddingsize= 0;
 
   /*
-    Shortcut. The extended header size will be either 6 or 10 bytes. 
+    Shortcut. The extended header size will be either 6 or 10 bytes.
     If it's ten bytes, it means that there's CRC data (though we check
-    the flag anyway). I'm gonna save it, though I'll be damned if I 
+    the flag anyway). I'm gonna save it, though I'll be damned if I
     know what to do with it.
   */
-  if ((blob[3] == 0x0A) && (blob[4])) 
+  if ((blob[3] == 0x0A) && (blob[4]))
     CRC= (blob[10] << 24) + (blob[11] << 16) +
       (blob[12] << 8) + (blob[13]);
 
@@ -422,39 +515,39 @@ static int process_extended_header(ID3 *info, unsigned char *blob)
   return id_2_3(info, blob);
 }
 
-static int get_id3v2_tag (ID3 *info, unsigned char *blob, size_t blob_length) 
+static int get_id3v2_tag (ID3 *info, unsigned char *blob, size_t blob_length)
 {
   int unsynchronized= 0;
   int hasExtendedHeader= 0;
   unsigned char *ptr_buffer= blob;
 
-  if (!strncmp((char *)ptr_buffer, "ID3", 3)) 
+  if (!strncmp((char *)ptr_buffer, "ID3", 3))
   {
     info->tag_length= id3_size(ptr_buffer+6);
     snprintf(info->version, VERSION_SIZE, "2.%d.%d", blob[3], blob[4]);
 
-    if ((blob[5] & 0x40) >> 6) 
+    if ((blob[5] & 0x40) >> 6)
       hasExtendedHeader= 1;
 
-    if ((blob[5] & 0x80) >> 7) 
+    if ((blob[5] & 0x80) >> 7)
       unsynchronized= 1;
 
     /* We can not handle experimental tags */
-    if ((blob[5] & 0x20) >> 5) 
+    if ((blob[5] & 0x20) >> 5)
       return 1;
 
 
 #ifdef NOT_SUPPORTED
-    if (unsynchronized) 
+    if (unsynchronized)
     {
       register int i,j; /*index*/
       /*
         Replace every instance of '0xFF 0x00'
         with '0xFF'
       */
-      for(i=10; i < info->tag_length; i++) 
-        if (blob[i] == 0xFF && blob[i+1] == 0x00) 
-          for(j=i+1; i < info->tag_length; i++) 
+      for(i=10; i < info->tag_length; i++)
+        if (blob[i] == 0xFF && blob[i+1] == 0x00)
+          for(j=i+1; i < info->tag_length; i++)
             blob[j]= blob[j+1];
 
     }
@@ -463,23 +556,23 @@ static int get_id3v2_tag (ID3 *info, unsigned char *blob, size_t blob_length)
     /* Move past the above */
     ptr_buffer += 10;
     /*If the tag has an extended header, parse it*/
-    if (hasExtendedHeader) 
+    if (hasExtendedHeader)
       return process_extended_header(info, blob);
-    else if (blob[3] == 2) 
+    else if (blob[3] == 2)
       return id_2_2(info, ptr_buffer);
-    else if (blob[3] == 3) 
+    else if (blob[3] == 3)
       return id_2_3(info, ptr_buffer);
     // Yes, I will need to fix this at some point
-    else if (blob[3] == 4) 
+    else if (blob[3] == 4)
       return id_2_3(info, ptr_buffer);
-    else 
+    else
       return ID3_ERR_UNSUPPORTED_FORMAT;
   }
 
   return 1;
 }
 
-int ID3_to_file(char *filename, char *newfile) 
+int ID3_to_file(char *filename, char *newfile)
 {
   int rc= ID3_OK;
   caddr_t blob, tag;
@@ -489,15 +582,15 @@ int ID3_to_file(char *filename, char *newfile)
 
   size_t tag_length= 0;
 
-  if (stat(filename, &blob_buf)) 
+  if (stat(filename, &blob_buf))
     return -1;
 
 
-  if ((fd= open(filename, O_RDONLY)) ==  -1) 
+  if ((fd= open(filename, O_RDONLY)) ==  -1)
     return -1;
 
   blob= mmap(NULL, blob_buf.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
-  if ((blob == NULL) || (blob ==(caddr_t)-1)) 
+  if ((blob == NULL) || (blob ==(caddr_t)-1))
     return ID3_ERR_EMPTY_FILE;
 
   close(fd);
@@ -511,15 +604,15 @@ int ID3_to_file(char *filename, char *newfile)
 
 
 
-  if ((blob_buf.st_size > 128)) 
+  if ((blob_buf.st_size > 128))
   {
     ptr= (unsigned char *)blob + (blob_buf.st_size - 128);
     //  Set ptr back to NULL if it is not pointing to a tag
-    if (memcmp(ptr, "TAG", 3)) 
+    if (memcmp(ptr, "TAG", 3))
       ptr= NULL;
   }
 
-  if (!strncmp(blob, "ID3", 3)) 
+  if (!strncmp(blob, "ID3", 3))
   {
     tag_length= id3_size((unsigned char *)blob+6);
   }
@@ -533,7 +626,7 @@ int ID3_to_file(char *filename, char *newfile)
       return -1;
     ftruncate(fileno(new), total);
     tag= mmap(NULL, total, PROT_READ | PROT_WRITE, MAP_SHARED, fileno(new), 0);
-    if ((tag == NULL) || (tag ==(caddr_t)-1)) 
+    if ((tag == NULL) || (tag ==(caddr_t)-1))
       return ID3_ERR_EMPTY_FILE;
 
     fclose(new);
@@ -553,7 +646,7 @@ int ID3_to_file(char *filename, char *newfile)
   return rc;
 }
 
-int parse_file_ID3(ID3 *info, char *filename) 
+int parse_file_ID3(ID3 *info, char *filename)
 {
   int rc= ID3_OK;
   caddr_t blob;
@@ -561,7 +654,7 @@ int parse_file_ID3(ID3 *info, char *filename)
   size_t blocksize= (size_t)getpagesize();
   struct stat sb;
 
-  if ((fd= open(filename, O_RDONLY)) ==  -1) 
+  if ((fd= open(filename, O_RDONLY)) ==  -1)
     return -1;
 
   (void)fstat(fd, &sb);
@@ -574,7 +667,7 @@ int parse_file_ID3(ID3 *info, char *filename)
     blocksize= sb.st_size < blocksize ? sb.st_size : blocksize;
 
   blob= mmap(NULL, blocksize, PROT_READ, MAP_PRIVATE, fd, 0);
-  if (blob ==(caddr_t)-1) 
+  if (blob ==(caddr_t)-1)
   {
     close(fd);
     return ID3_ERR_EMPTY_FILE;
@@ -593,7 +686,7 @@ int parse_file_ID3(ID3 *info, char *filename)
       munmap(blob, blocksize);
       blocksize= length;
       blob= mmap(NULL, blocksize, PROT_READ, MAP_PRIVATE, fd, 0);
-      if ((blob == NULL) || (blob ==(caddr_t)-1)) 
+      if ((blob == NULL) || (blob ==(caddr_t)-1))
         return ID3_ERR_EMPTY_FILE;
     }
   }
@@ -607,7 +700,7 @@ int parse_file_ID3(ID3 *info, char *filename)
   {
     info->data= blob;
     info->data_size= blocksize;
-  } 
+  }
   else
   {
     munmap(blob, blocksize);
@@ -617,14 +710,14 @@ int parse_file_ID3(ID3 *info, char *filename)
   return rc;
 }
 
-int parse_blob_ID3(ID3 *info, unsigned char *blob, size_t blob_length) 
+int parse_blob_ID3(ID3 *info, unsigned char *blob, size_t blob_length)
 {
   int rc= ID3_ERR_NO_TAG;
 
   // Sometimes people encode both headers, so we test for both
 
   // Why 127 instead of 128? The file may only have a tag in it
-  if ((blob_length > 127) && !get_id3v1_tag(info, blob, blob_length)) 
+  if ((blob_length > 127) && !get_id3v1_tag(info, blob, blob_length))
     rc= ID3_OK;
 
   if (!get_id3v2_tag(info, blob, blob_length))
@@ -636,7 +729,7 @@ int parse_blob_ID3(ID3 *info, unsigned char *blob, size_t blob_length)
   return rc;
 }
 
-int destroy_ID3(ID3 *info) 
+int destroy_ID3(ID3 *info)
 {
   DEBUG_ENTER("destroy_ID3");
   if (info && !info->user_memory)
@@ -649,12 +742,12 @@ int destroy_ID3(ID3 *info)
   DEBUG_RETURN(0); //Eventually we should do more here
 }
 
-void set_flags_ID3(ID3 *info, id3flags mask) 
+void set_flags_ID3(ID3 *info, id3flags mask)
 {
   info->mask= mask;
 }
 
-void set_memory_ID3(ID3 *info, unsigned char *ptr, size_t size) 
+void set_memory_ID3(ID3 *info, unsigned char *ptr, size_t size)
 {
   if (info->size)
     return;
@@ -664,10 +757,10 @@ void set_memory_ID3(ID3 *info, unsigned char *ptr, size_t size)
   info->size= size;
 }
 
-ID3 * create_ID3(ID3 *info) 
+ID3 * create_ID3(ID3 *info)
 {
   //At the moment ID3 is just a structure
-  if (info) 
+  if (info)
   {
     id3flags mask= info->mask;
     void *func= info->processor;
@@ -682,11 +775,11 @@ ID3 * create_ID3(ID3 *info)
     info->allocated= info->allocated;
     info->processor= func ? func : select_tag;
     info->ptr= info->buffer;
-  } 
-  else 
+  }
+  else
   {
     info= (ID3 *)malloc(sizeof(ID3));
-    if (info) 
+    if (info)
       memset(info, 0, sizeof(ID3));
     else {
       assert(0);
