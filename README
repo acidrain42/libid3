@@ -9,8 +9,11 @@ DESCRIPTION
     attributes. This library can extract those tags. For more information
     see http://id3.org.
 
+    This is a fork of libid3 by Brian Aker, which was not developed since 2004.
+
 Where do I get it from?
-    You can get it from http://software.tangent.org/download/ via the web.
+    You can get it from http://github.com/acidrain42/libid3 via the web.
+    You can also get the original version from http://freshmeat.net/projects/libid3/
 
 What sort of license does it have?
     You are pretty much free to use it as you please. Check out the License
@@ -161,9 +164,10 @@ SEE ALSO
 
 AUTHOR
     Brian Aker, <brian@tangent.org>
+    Mathieu Lemay, <acidrain1@gmail.com>
 
 COPYRIGHT AND LICENSE
-    Copyright 2004 by Brian Aker
+    Copyright 2011 by Mathieu Lemay
 
     Please see the license file for information (if you need a different
     license please contact the author).
